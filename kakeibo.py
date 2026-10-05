@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import datetime, timezone, timedelta
 import calendar
 
 # --- 初期設定・データ構造 ---
@@ -49,34 +49,29 @@ with st.sidebar:
 # --- メイン画面 ---
 st.title("💰 家計管理アプリ")
 
-# 📅 年・月・日の選択（横並びでコンパクトに）
-today = date.today()
-col1, col2, col3 = st.columns(3)
+# 📅 日本時間(JST)のリアルタイム日付を取得
+JST = timezone(timedelta(hours=+9), 'JST')
+today = datetime.now(JST).date()
 
-with col1:
-    selected_year = st.selectbox("年", range(today.year - 2, today.year + 3), index=2)
-with col2:
-    selected_month = st.selectbox("月", range(1, 13), index=today.month - 1)
+# カレンダー形式のUI（買ったその場の入力用に「今日」が初期値。過去も選択可能）
+selected_date = st.date_input("🗓 買い物をした日付を選択してください", value=today)
 
-# 選択された年月の最終日を取得
-_, max_days = calendar.monthrange(selected_year, selected_month)
-
-with col3:
-    # 今月を見ている場合は「今日の日付」、違う月の場合は「1日」をデフォルトに
-    default_day = today.day if (selected_year == today.year and selected_month == today.month) else 1
-    default_day = min(default_day, max_days)
-    selected_day = st.selectbox("日", range(1, max_days + 1), index=default_day - 1)
+# 選択された日付から年・月・日を抽出
+selected_year = selected_date.year
+selected_month = selected_date.month
+selected_day = selected_date.day
 
 ym_key = f"{selected_year}年{selected_month}月"
+_, max_days = calendar.monthrange(selected_year, selected_month)
 
-# データベースの初期化・データ構造の更新（週別から日別に変更）
+# データベースの初期化
 if ym_key not in st.session_state.db:
     st.session_state.db[ym_key] = {
         "budgets": {cat: 0 for cat in CATEGORIES},
         "actuals": {d: {cat: 0 for cat in CATEGORIES} for d in range(1, 32)}
     }
 else:
-    # 過去の週別データが残っていた場合は日別フォーマットにリセット
+    # 過去の週別フォーマットが残っていれば日別にリセット
     if "第1週" in st.session_state.db[ym_key]["actuals"]:
         st.session_state.db[ym_key]["actuals"] = {d: {cat: 0 for cat in CATEGORIES} for d in range(1, 32)}
 
@@ -87,7 +82,7 @@ tab1, tab2 = st.tabs(["🗓️ 日別入力・月別管理", "📊 年間予実�
 
 with tab1:
     # --- 予算設定エリア ---
-    with st.expander("⚙️️ 予算の設定・修正", expanded=False):
+    with st.expander("⚙ 予算の設定・修正", expanded=False):
         if st.session_state.role in ["admin", "edit"]:
             st.write(f"**{ym_key}** の予算を入力してください。")
             b_cols = st.columns(len(CATEGORIES))
@@ -106,10 +101,10 @@ with tab1:
 
     st.markdown("---")
     
-    # --- 日別入力エリア（スクロール不要のコンパクト設計） ---
-    st.subheader(f"✏️️ {selected_month}月{selected_day}日 の実績入力")
+    # --- 日別入力エリア ---
+    st.subheader(f"✏ {selected_month}月{selected_day}日 の実績入力")
     
-    input_cols = st.columns(2) # 2列にしてスマホでも見やすく
+    input_cols = st.columns(2)
     for i, cat in enumerate(CATEGORIES):
         col = input_cols[i % 2]
         with col:
@@ -132,11 +127,10 @@ with tab1:
 
     st.markdown("---")
 
-    # --- 月間データ一覧表（直接編集可能） ---
+    # --- 月間データ一覧表 ---
     with st.expander(f"📋 {selected_month}月の日別データを一覧で見る / 編集する"):
         st.write("表の数値を直接クリックして変更することも可能です。")
         
-        # 表用データの作成
         df_data = []
         for d in range(1, max_days + 1):
             row = {"日": f"{d}日"}
@@ -146,9 +140,7 @@ with tab1:
         df_month = pd.DataFrame(df_data).set_index("日")
         
         if st.session_state.role in ["admin", "edit"]:
-            # データエディタ（Excelのように直接編集可能）を表示
             edited_df = st.data_editor(df_month, use_container_width=True)
-            # 変更内容をデータベースに反映
             for d in range(1, max_days + 1):
                 day_str = f"{d}日"
                 for cat in CATEGORIES:
@@ -166,7 +158,6 @@ with tab2:
         if key.startswith(f"{selected_year}年"):
             for cat in CATEGORIES:
                 annual_budgets[cat] += data["budgets"][cat]
-                # 1日〜31日までの実績を合計
                 annual_actuals[cat] += sum(data["actuals"][d].get(cat, 0) for d in range(1, 32))
 
     summary_data = []
